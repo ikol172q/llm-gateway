@@ -1,0 +1,18 @@
+# 敏感数据
+.env
+
+# Python 虚拟环境
+.venv/
+
+# 日志
+*.log
+
+# 系统 / 编辑器
+__pycache__/
+.DS_Store
+*.swp
+*~
+
+# 运行时生成
+run-litellm.sh
+models/*.disabled

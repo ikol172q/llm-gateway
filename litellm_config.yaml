@@ -1,0 +1,60 @@
+# =============================================================
+# LiteLLM Config — 自动生成，请勿手动编辑
+# 用 ./gateway 命令管理模型
+# =============================================================
+
+model_list:
+
+  - model_name: deepseek-chat
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+    model_info:
+      description: "DeepSeek V3 Chat — $0.14/$0.28/M"
+
+  - model_name: deepseek-reasoner
+    litellm_params:
+      model: deepseek/deepseek-reasoner
+      api_key: os.environ/DEEPSEEK_API_KEY
+    model_info:
+      description: "DeepSeek R1 Reasoner — $0.55/$2.19/M"
+
+  - model_name: local
+    litellm_params:
+      model: ollama_chat/qwen3:14b
+      api_base: http://localhost:11434
+    model_info:
+      description: "本地 Qwen3 14B — 日常主力"
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+# -----------------------------------------------------------
+# 路由设置
+# -----------------------------------------------------------
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+  timeout: 120
+  allowed_fails: 3
+
+  fallbacks:
+
+    - local: [deepseek-chat]
+
+# -----------------------------------------------------------
+# LiteLLM 全局设置
+# -----------------------------------------------------------
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  cache: true
+  cache_params:
+    type: local
+    ttl: 600
+
+# -----------------------------------------------------------
+# 安全设置
+# -----------------------------------------------------------
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: false

@@ -1,0 +1,6 @@
+name=deepseek-chat
+model=deepseek/deepseek-chat
+api_base=
+api_key_env=DEEPSEEK_API_KEY
+description=DeepSeek V3 Chat — $0.14/$0.28/M
+fallback=

@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>本地部署 vs 云端开源模型对比</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, 'PingFang SC', sans-serif; background: #0f1117; color: #e0e0e0; padding: 24px; }
+  h1 { text-align: center; font-size: 22px; margin-bottom: 8px; color: #fff; }
+  .subtitle { text-align: center; font-size: 13px; color: #888; margin-bottom: 28px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1100px; margin: 0 auto; }
+  .card { background: #1a1d27; border-radius: 12px; padding: 20px; border: 1px solid #2a2d3a; }
+  .card h2 { font-size: 15px; color: #a0aec0; margin-bottom: 14px; font-weight: 500; }
+  .chart-box { position: relative; height: 320px; }
+  .legend-note { font-size: 11px; color: #666; margin-top: 8px; text-align: center; }
+
+  .table-section { max-width: 1100px; margin: 28px auto 0; }
+  .table-section h2 { font-size: 16px; color: #a0aec0; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: #1e2130; padding: 10px 12px; text-align: left; color: #8b95a5; font-weight: 500; border-bottom: 1px solid #2a2d3a; }
+  td { padding: 10px 12px; border-bottom: 1px solid #1e2130; }
+  tr:hover td { background: #1a1d27; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .tag-local { background: #1a3a2a; color: #4ade80; }
+  .tag-cloud { background: #1a2a3a; color: #60a5fa; }
+  .tag-frontier { background: #3a1a3a; color: #c084fc; }
+  .bar-cell { display: flex; align-items: center; gap: 8px; }
+  .bar { height: 18px; border-radius: 3px; min-width: 2px; }
+  .bar-green { background: linear-gradient(90deg, #22c55e, #4ade80); }
+  .bar-blue { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
+  .bar-purple { background: linear-gradient(90deg, #8b5cf6, #a78bfa); }
+
+  .summary-box { max-width: 1100px; margin: 28px auto; background: #1a1d27; border-radius: 12px; padding: 20px; border: 1px solid #2a2d3a; }
+  .summary-box h2 { font-size: 16px; color: #f59e0b; margin-bottom: 10px; }
+  .summary-box p { font-size: 13px; line-height: 1.7; color: #c0c8d4; }
+  .highlight { color: #4ade80; font-weight: 600; }
+  .warn { color: #f59e0b; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1>🖥 本地可部署 vs ☁️ 云端最强开源模型 对比</h1>
+<p class="subtitle">Mac Studio M4 Max 36GB · 2026 年 3 月数据</p>
+
+<div class="grid">
+  <div class="card">
+    <h2>📊 综合质量评分 (MMLU 近似, 满分 100)</h2>
+    <div class="chart-box"><canvas id="qualityChart"></canvas></div>
+    <p class="legend-note">🟢 本地可跑 · 🔵 云端开源 · 🟣 闭源前沿</p>
+  </div>
+  <div class="card">
+    <h2>⚡ 推理速度 (tokens/sec)</h2>
+    <div class="chart-box"><canvas id="speedChart"></canvas></div>
+    <p class="legend-note">本地速度为 M4 Max 实测估算 · 云端为 API 平均</p>
+  </div>
+</div>
+
+<div class="table-section">
+  <h2>📋 全维度对比表</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>模型</th>
+        <th>类型</th>
+        <th>参数量</th>
+        <th>质量 (MMLU≈)</th>
+        <th>编程 (HumanEval≈)</th>
+        <th>速度</th>
+        <th>成本/M tokens</th>
+        <th>中文能力</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Qwen3 8B</strong></td>
+        <td><span class="tag tag-local">本地</span></td>
+        <td>8B Q8</td>
+        <td><div class="bar-cell"><div class="bar bar-green" style="width:120px"></div>73</div></td>
+        <td><div class="bar-cell"><div class="bar bar-green" style="width:110px"></div>68</div></td>
+        <td>40+ tok/s</td>
+        <td>$0</td>
+        <td>⭐⭐⭐⭐⭐</td>
+      </tr>
+      <tr>
+        <td><strong>Qwen3 14B</strong></td>
+        <td><span class="tag tag-local">本地</span></td>
+        <td>14B Q4</td>
+        <td><div class="bar-cell"><div class="bar bar-green" style="width:135px"></div>78</div></td>
+        <td><div class="bar-cell"><div class="bar bar-green" style="width:130px"></div>75</div></td>
+        <td>25-30 tok/s</td>
+        <td>$0</td>
+        <td>⭐⭐⭐⭐⭐</td>
+      </tr>
+      <tr>
+        <td><strong>Devstral 24B</strong></td>
+        <td><span class="tag tag-local">本地</span></td>
+        <td>24B Q4</td>
+        <td><div class="bar-cell"><div class="bar bar-green" style="width:130px"></div>76</div></td>
+        <td><div class="bar-cell"><div class="bar bar-green" style="width:150px"></div>85</div></td>
+        <td>18-22 tok/s</td>
+        <td>$0</td>
+        <td>⭐⭐⭐</td>
+      </tr>
+      <tr>
+        <td><strong>Qwen3 32B</strong></td>
+        <td><span class="tag tag-local">本地</span></td>
+        <td>32B Q4</td>
+        <td><div class="bar-cell"><div class="bar bar-green" style="width:145px"></div>82</div></td>
+        <td><div class="bar-cell"><div class="bar bar-green" style="width:145px"></div>82</div></td>
+        <td>15-22 tok/s</td>
+        <td>$0</td>
+        <td>⭐⭐⭐⭐⭐</td>
+      </tr>
+      <tr style="background:#111320">
+        <td><strong>Qwen3 235B</strong></td>
+        <td><span class="tag tag-cloud">云端开源</span></td>
+        <td>235B MoE</td>
+        <td><div class="bar-cell"><div class="bar bar-blue" style="width:158px"></div>90</div></td>
+        <td><div class="bar-cell"><div class="bar bar-blue" style="width:155px"></div>88</div></td>
+        <td>50-80 tok/s</td>
+        <td>$0.26-0.50</td>
+        <td>⭐⭐⭐⭐⭐</td>
+      </tr>
+      <tr style="background:#111320">
+        <td><strong>DeepSeek V3.2</strong></td>
+        <td><span class="tag tag-cloud">云端开源</span></td>
+        <td>685B MoE</td>
+        <td><div class="bar-cell"><div class="bar bar-blue" style="width:152px"></div>87</div></td>
+        <td><div class="bar-cell"><div class="bar bar-blue" style="width:148px"></div>84</div></td>
+        <td>60-100 tok/s</td>
+        <td>$0.14-0.28</td>
+        <td>⭐⭐⭐⭐⭐</td>
+      </tr>
+      <tr style="background:#111320">
+        <td><strong>Llama 4 Scout</strong></td>
+        <td><span class="tag tag-cloud">云端开源</span></td>
+        <td>17B×16E</td>
+        <td><div class="bar-cell"><div class="bar bar-blue" style="width:148px"></div>85</div></td>
+        <td><div class="bar-cell"><div class="bar bar-blue" style="width:140px"></div>80</div></td>
+        <td>500+ tok/s (Groq)</td>
+        <td>$0.11</td>
+        <td>⭐⭐⭐</td>
+      </tr>
+      <tr style="background:#18101e">
+        <td><strong>Claude Sonnet 4.6</strong></td>
+        <td><span class="tag tag-frontier">闭源前沿</span></td>
+        <td>—</td>
+        <td><div class="bar-cell"><div class="bar bar-purple" style="width:163px"></div>92</div></td>
+        <td><div class="bar-cell"><div class="bar bar-purple" style="width:168px"></div>93</div></td>
+        <td>80-120 tok/s</td>
+        <td>$3-15</td>
+        <td>⭐⭐⭐⭐</td>
+      </tr>
+      <tr style="background:#18101e">
+        <td><strong>GPT-5</strong></td>
+        <td><span class="tag tag-frontier">闭源前沿</span></td>
+        <td>—</td>
+        <td><div class="bar-cell"><div class="bar bar-purple" style="width:168px"></div>94</div></td>
+        <td><div class="bar-cell"><div class="bar bar-purple" style="width:165px"></div>92</div></td>
+        <td>60-100 tok/s</td>
+        <td>$1.75-14</td>
+        <td>⭐⭐⭐⭐</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="summary-box">
+  <h2>💡 核心结论</h2>
+  <p>
+    本地 Qwen3 14B 大约能达到云端最强开源模型 <span class="highlight">85-87%</span> 的质量，达到闭源前沿模型 <span class="warn">78-82%</span> 的质量。
+    如果升级到本地 Qwen3 32B (Q4)，质量差距可缩小到 <span class="highlight">90-92%</span> vs 云端开源最强，<span class="warn">85-88%</span> vs 闭源前沿。
+    速度方面，本地 25-30 tok/s 对日常使用完全够用，但 Groq 等云端推理可达 500+ tok/s。
+    <strong>你的 hybrid 方案（本地日常 + 云端兜底）是最优策略。</strong>
+  </p>
+</div>
+
+<script>
+const qualityData = {
+  labels: ['Qwen3 8B\n(本地)', 'Qwen3 14B\n(本地)', 'Devstral 24B\n(本地)', 'Qwen3 32B\n(本地)', 'Qwen3 235B\n(云端)', 'DeepSeek V3\n(云端)', 'Claude 4.6\n(闭源)', 'GPT-5\n(闭源)'],
+  datasets: [{
+    label: 'MMLU 近似分',
+    data: [73, 78, 76, 82, 90, 87, 92, 94],
+    backgroundColor: ['#22c55e','#22c55e','#22c55e','#22c55e','#3b82f6','#3b82f6','#8b5cf6','#8b5cf6'],
+    borderRadius: 6, barPercentage: 0.7
+  }]
+};
+new Chart(document.getElementById('qualityChart'), {
+  type: 'bar', data: qualityData,
+  options: {
+    indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+    scales: {
+      x: { min: 50, max: 100, grid: { color: '#1e2130' }, ticks: { color: '#666' } },
+      y: { grid: { display: false }, ticks: { color: '#aaa', font: { size: 11 } } }
+    },
+    plugins: { legend: { display: false },
+      tooltip: { callbacks: { label: ctx => `MMLU ≈ ${ctx.raw}` } }
+    }
+  }
+});
+
+const speedData = {
+  labels: ['Qwen3 8B\n(本地)', 'Qwen3 14B\n(本地)', 'Devstral 24B\n(本地)', 'Qwen3 32B\n(本地)', 'Qwen3 235B\n(Together)', 'DeepSeek V3\n(API)', 'Llama 4 Scout\n(Groq)'],
+  datasets: [{
+    label: 'tokens/sec',
+    data: [42, 28, 20, 18, 65, 80, 500],
+    backgroundColor: ['#22c55e','#22c55e','#22c55e','#22c55e','#3b82f6','#3b82f6','#3b82f6'],
+    borderRadius: 6, barPercentage: 0.7
+  }]
+};
+new Chart(document.getElementById('speedChart'), {
+  type: 'bar', data: speedData,
+  options: {
+    indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+    scales: {
+      x: { grid: { color: '#1e2130' }, ticks: { color: '#666' },
+        afterBuildTicks: function(axis) { axis.max = 550; }
+      },
+      y: { grid: { display: false }, ticks: { color: '#aaa', font: { size: 11 } } }
+    },
+    plugins: { legend: { display: false },
+      tooltip: { callbacks: { label: ctx => `${ctx.raw} tok/s` } }
+    }
+  }
+});
+</script>
+</body>
+</html>

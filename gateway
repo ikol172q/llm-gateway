@@ -1,0 +1,429 @@
+#!/bin/bash
+# ============================================================
+# LLM Gateway 管理工具
+# 用法: ./gateway <命令>
+# ============================================================
+
+set -e
+
+GATEWAY_DIR="$(cd "$(dirname "$0")" && pwd)"
+MODELS_DIR="$GATEWAY_DIR/models"
+CONFIG_FILE="$GATEWAY_DIR/litellm_config.yaml"
+ENV_FILE="$GATEWAY_DIR/.env"
+
+CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# 确保 models 目录存在
+mkdir -p "$MODELS_DIR"
+
+# ---- 帮助信息 ----
+show_help() {
+    echo -e "${CYAN}LLM Gateway 管理工具${NC}"
+    echo ""
+    echo "用法: ./gateway <命令>"
+    echo ""
+    echo -e "${YELLOW}模型管理:${NC}"
+    echo "  list                  列出所有已配置模型"
+    echo "  add <名字> <模型>     添加模型"
+    echo "  remove <名字>         移除模型"
+    echo "  enable <名字>         启用已禁用的模型"
+    echo "  disable <名字>        禁用模型 (不删除)"
+    echo ""
+    echo -e "${YELLOW}服务管理:${NC}"
+    echo "  restart               重启 LiteLLM (应用配置变更)"
+    echo "  stop                  停止 LiteLLM"
+    echo "  status                查看状态"
+    echo "  logs                  查看日志"
+    echo "  test                  运行连通性测试"
+    echo ""
+    echo -e "${YELLOW}Ollama:${NC}"
+    echo "  pull <模型>           拉取 Ollama 模型并自动添加为本地模型"
+    echo "  ollama-list           列出 Ollama 已下载的模型"
+    echo "  ollama-rm <模型>      删除 Ollama 模型并移除配置"
+    echo ""
+    echo -e "${YELLOW}示例:${NC}"
+    echo "  ./gateway add deepseek-chat deepseek/deepseek-chat"
+    echo "  ./gateway add local ollama_chat/qwen3:14b"
+    echo "  ./gateway pull qwen3:32b"
+    echo "  ./gateway remove old-model"
+    echo "  ./gateway disable deepseek-reasoner"
+    echo "  ./gateway list"
+}
+
+# ---- 从 models/*.yaml 生成完整 litellm_config.yaml ----
+generate_config() {
+    # 读 .env 获取可用的 key 名
+    local env_keys=""
+    if [ -f "$ENV_FILE" ]; then
+        env_keys=$(grep -v '^#' "$ENV_FILE" | grep -v '^$' | cut -d= -f1)
+    fi
+
+    cat > "$CONFIG_FILE" << 'HEADER'
+# =============================================================
+# LiteLLM Config — 自动生成，请勿手动编辑
+# 用 ./gateway 命令管理模型
+# =============================================================
+
+model_list:
+HEADER
+
+    local fallbacks=""
+    local has_models=false
+
+    for model_file in "$MODELS_DIR"/*.yaml; do
+        [ -f "$model_file" ] || continue
+
+        local basename=$(basename "$model_file" .yaml)
+
+        # 跳过 disabled 文件
+        if [ -f "$MODELS_DIR/${basename}.disabled" ]; then
+            continue
+        fi
+
+        has_models=true
+
+        # 读取模型配置
+        local model_name=""
+        local model_id=""
+        local api_base=""
+        local api_key_env=""
+        local description=""
+        local is_local=false
+        local fallback_to=""
+
+        while IFS='=' read -r key value; do
+            value=$(echo "$value" | sed 's/^ *//;s/ *$//')
+            case "$key" in
+                name) model_name="$value" ;;
+                model) model_id="$value" ;;
+                api_base) api_base="$value" ;;
+                api_key_env) api_key_env="$value" ;;
+                description) description="$value" ;;
+                fallback) fallback_to="$value" ;;
+            esac
+        done < "$model_file"
+
+        # 判断是否本地模型
+        if echo "$model_id" | grep -q "^ollama"; then
+            is_local=true
+        fi
+
+        # 写入 model 条目
+        echo "" >> "$CONFIG_FILE"
+        echo "  - model_name: ${model_name}" >> "$CONFIG_FILE"
+        echo "    litellm_params:" >> "$CONFIG_FILE"
+        echo "      model: ${model_id}" >> "$CONFIG_FILE"
+
+        if [ -n "$api_base" ]; then
+            echo "      api_base: ${api_base}" >> "$CONFIG_FILE"
+        fi
+
+        if [ -n "$api_key_env" ]; then
+            echo "      api_key: os.environ/${api_key_env}" >> "$CONFIG_FILE"
+        fi
+
+        echo "    model_info:" >> "$CONFIG_FILE"
+        if [ -n "$description" ]; then
+            echo "      description: \"${description}\"" >> "$CONFIG_FILE"
+        fi
+        if $is_local; then
+            echo "      input_cost_per_token: 0" >> "$CONFIG_FILE"
+            echo "      output_cost_per_token: 0" >> "$CONFIG_FILE"
+        fi
+
+        # 收集 fallback
+        if [ -n "$fallback_to" ]; then
+            fallbacks="${fallbacks}\n    - ${model_name}: [${fallback_to}]"
+        fi
+    done
+
+    if ! $has_models; then
+        echo "  []" >> "$CONFIG_FILE"
+    fi
+
+    # 路由设置
+    cat >> "$CONFIG_FILE" << 'ROUTER'
+
+# -----------------------------------------------------------
+# 路由设置
+# -----------------------------------------------------------
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+  timeout: 120
+  allowed_fails: 3
+ROUTER
+
+    if [ -n "$fallbacks" ]; then
+        echo "" >> "$CONFIG_FILE"
+        echo "  fallbacks:" >> "$CONFIG_FILE"
+        echo -e "$fallbacks" >> "$CONFIG_FILE"
+    fi
+
+    # 全局设置
+    cat >> "$CONFIG_FILE" << 'SETTINGS'
+
+# -----------------------------------------------------------
+# LiteLLM 全局设置
+# -----------------------------------------------------------
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  cache: true
+  cache_params:
+    type: local
+    ttl: 600
+
+# -----------------------------------------------------------
+# 安全设置
+# -----------------------------------------------------------
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: false
+SETTINGS
+
+    echo -e "${GREEN}✅ 配置已生成: ${CONFIG_FILE}${NC}"
+}
+
+# ---- 重启 LiteLLM ----
+restart_litellm() {
+    echo -e "${YELLOW}🔄 重启 LiteLLM...${NC}"
+    launchctl kickstart -k gui/$(id -u)/com.llmgateway.litellm 2>/dev/null && \
+        echo -e "${GREEN}✅ 已重启${NC}" || \
+        echo -e "${RED}❌ 重启失败，尝试: launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.llmgateway.litellm.plist${NC}"
+}
+
+# ---- 命令: list ----
+cmd_list() {
+    echo -e "${CYAN}已配置模型:${NC}"
+    echo ""
+
+    local has_any=false
+    for model_file in "$MODELS_DIR"/*.yaml; do
+        [ -f "$model_file" ] || continue
+        has_any=true
+
+        local basename=$(basename "$model_file" .yaml)
+        local name=$(grep '^name=' "$model_file" | cut -d= -f2-)
+        local model=$(grep '^model=' "$model_file" | cut -d= -f2-)
+        local desc=$(grep '^description=' "$model_file" | cut -d= -f2-)
+
+        local status="${GREEN}●${NC}"
+        local status_text=""
+        if [ -f "$MODELS_DIR/${basename}.disabled" ]; then
+            status="${DIM}○${NC}"
+            status_text=" ${DIM}(已禁用)${NC}"
+        fi
+
+        local cost=""
+        if echo "$model" | grep -q "^ollama"; then
+            cost="${GREEN}\$0${NC}"
+        else
+            cost="${YELLOW}\$\$${NC}"
+        fi
+
+        echo -e "  ${status} ${CYAN}${name}${NC}${status_text}"
+        echo -e "    模型: ${model}  ${cost}"
+        [ -n "$desc" ] && echo -e "    ${DIM}${desc}${NC}"
+        echo ""
+    done
+
+    if ! $has_any; then
+        echo -e "  ${DIM}(无模型，用 ./gateway add 添加)${NC}"
+    fi
+}
+
+# ---- 命令: add ----
+cmd_add() {
+    local name="$1"
+    local model="$2"
+
+    if [ -z "$name" ] || [ -z "$model" ]; then
+        echo -e "${RED}用法: ./gateway add <名字> <模型>${NC}"
+        echo ""
+        echo "示例:"
+        echo "  ./gateway add local ollama_chat/qwen3:14b"
+        echo "  ./gateway add deepseek-chat deepseek/deepseek-chat"
+        echo "  ./gateway add deepseek-reasoner deepseek/deepseek-reasoner"
+        echo "  ./gateway add claude anthropic/claude-sonnet-4-6-20250214"
+        return 1
+    fi
+
+    local model_file="$MODELS_DIR/${name}.yaml"
+
+    # 自动检测配置
+    local api_base=""
+    local api_key_env=""
+    local fallback=""
+    local description=""
+
+    if echo "$model" | grep -q "^ollama"; then
+        api_base="http://localhost:11434"
+        fallback="deepseek-chat"
+        description="本地模型 via Ollama"
+    elif echo "$model" | grep -q "^deepseek"; then
+        api_key_env="DEEPSEEK_API_KEY"
+        description="DeepSeek API"
+    elif echo "$model" | grep -q "^together_ai"; then
+        api_key_env="TOGETHERAI_API_KEY"
+        description="Together.ai API"
+    elif echo "$model" | grep -q "^anthropic"; then
+        api_key_env="ANTHROPIC_API_KEY"
+        description="Anthropic API"
+    elif echo "$model" | grep -q "^groq"; then
+        api_key_env="GROQ_API_KEY"
+        description="Groq API"
+    elif echo "$model" | grep -q "^openai"; then
+        api_key_env="OPENAI_API_KEY"
+        description="OpenAI API"
+    fi
+
+    # 写入模型文件
+    cat > "$model_file" << EOF
+name=${name}
+model=${model}
+api_base=${api_base}
+api_key_env=${api_key_env}
+description=${description}
+fallback=${fallback}
+EOF
+
+    # 检查 API key 是否已配置
+    if [ -n "$api_key_env" ]; then
+        local key_value=$(grep "^${api_key_env}=" "$ENV_FILE" 2>/dev/null | cut -d= -f2-)
+        if [ -z "$key_value" ]; then
+            echo -e "${YELLOW}⚠️  需要在 .env 中配置 ${api_key_env}${NC}"
+            # 自动添加到 .env
+            if ! grep -q "^${api_key_env}=" "$ENV_FILE" 2>/dev/null; then
+                echo "" >> "$ENV_FILE"
+                echo "# 自动添加" >> "$ENV_FILE"
+                echo "${api_key_env}=" >> "$ENV_FILE"
+                echo -e "${DIM}   已添加到 .env，请填入 key 值${NC}"
+            fi
+        fi
+    fi
+
+    # 移除 disabled 标记
+    rm -f "$MODELS_DIR/${name}.disabled"
+
+    echo -e "${GREEN}✅ 已添加: ${name} → ${model}${NC}"
+
+    generate_config
+    restart_litellm
+}
+
+# ---- 命令: remove ----
+cmd_remove() {
+    local name="$1"
+    if [ -z "$name" ]; then
+        echo -e "${RED}用法: ./gateway remove <名字>${NC}"
+        return 1
+    fi
+
+    local model_file="$MODELS_DIR/${name}.yaml"
+    if [ ! -f "$model_file" ]; then
+        echo -e "${RED}❌ 模型 '${name}' 不存在${NC}"
+        return 1
+    fi
+
+    rm -f "$model_file" "$MODELS_DIR/${name}.disabled"
+    echo -e "${GREEN}✅ 已移除: ${name}${NC}"
+
+    generate_config
+    restart_litellm
+}
+
+# ---- 命令: enable / disable ----
+cmd_enable() {
+    local name="$1"
+    if [ -z "$name" ] || [ ! -f "$MODELS_DIR/${name}.yaml" ]; then
+        echo -e "${RED}❌ 模型 '${name}' 不存在${NC}"
+        return 1
+    fi
+    rm -f "$MODELS_DIR/${name}.disabled"
+    echo -e "${GREEN}✅ 已启用: ${name}${NC}"
+    generate_config
+    restart_litellm
+}
+
+cmd_disable() {
+    local name="$1"
+    if [ -z "$name" ] || [ ! -f "$MODELS_DIR/${name}.yaml" ]; then
+        echo -e "${RED}❌ 模型 '${name}' 不存在${NC}"
+        return 1
+    fi
+    touch "$MODELS_DIR/${name}.disabled"
+    echo -e "${YELLOW}⏸  已禁用: ${name} (配置保留，用 enable 恢复)${NC}"
+    generate_config
+    restart_litellm
+}
+
+# ---- 命令: pull (Ollama 模型) ----
+cmd_pull() {
+    local model="$1"
+    if [ -z "$model" ]; then
+        echo -e "${RED}用法: ./gateway pull <ollama模型名>${NC}"
+        echo "示例: ./gateway pull qwen3:32b"
+        return 1
+    fi
+
+    echo -e "${YELLOW}⬇️  拉取 ${model}...${NC}"
+    ollama pull "$model"
+
+    # 生成名字: qwen3:14b → qwen3-14b
+    local safe_name=$(echo "$model" | sed 's/:/-/g; s/\//-/g')
+
+    cmd_add "$safe_name" "ollama_chat/${model}"
+}
+
+# ---- 命令: ollama-list ----
+cmd_ollama_list() {
+    echo -e "${CYAN}Ollama 已下载模型:${NC}"
+    ollama list 2>/dev/null || echo -e "${RED}Ollama 未运行${NC}"
+}
+
+# ---- 命令: ollama-rm ----
+cmd_ollama_rm() {
+    local model="$1"
+    if [ -z "$model" ]; then
+        echo -e "${RED}用法: ./gateway ollama-rm <模型名>${NC}"
+        return 1
+    fi
+
+    echo -e "${YELLOW}🗑  删除 Ollama 模型: ${model}${NC}"
+    ollama rm "$model" 2>/dev/null
+
+    # 找到并移除对应配置
+    local safe_name=$(echo "$model" | sed 's/:/-/g; s/\//-/g')
+    if [ -f "$MODELS_DIR/${safe_name}.yaml" ]; then
+        rm -f "$MODELS_DIR/${safe_name}.yaml" "$MODELS_DIR/${safe_name}.disabled"
+        echo -e "${GREEN}✅ 配置也已移除${NC}"
+        generate_config
+        restart_litellm
+    fi
+}
+
+# ---- 主入口 ----
+case "${1:-help}" in
+    list)           cmd_list ;;
+    add)            cmd_add "$2" "$3" ;;
+    remove|rm)      cmd_remove "$2" ;;
+    enable)         cmd_enable "$2" ;;
+    disable)        cmd_disable "$2" ;;
+    pull)           cmd_pull "$2" ;;
+    ollama-list)    cmd_ollama_list ;;
+    ollama-rm)      cmd_ollama_rm "$2" ;;
+    restart)        generate_config; restart_litellm ;;
+    stop)           launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.llmgateway.litellm.plist 2>/dev/null; echo -e "${GREEN}✅ 已停止${NC}" ;;
+    status)         "$GATEWAY_DIR/status.sh" ;;
+    logs)           tail -50f ~/Library/Logs/llm-gateway/litellm.log ;;
+    test)           "$GATEWAY_DIR/test.sh" ;;
+    generate)       generate_config ;;
+    help|--help|-h) show_help ;;
+    *)              echo -e "${RED}未知命令: $1${NC}"; show_help ;;
+esac

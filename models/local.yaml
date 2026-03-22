@@ -1,0 +1,6 @@
+name=local
+model=ollama_chat/qwen3:14b
+api_base=http://localhost:11434
+api_key_env=
+description=本地 Qwen3 14B — 日常主力
+fallback=deepseek-chat

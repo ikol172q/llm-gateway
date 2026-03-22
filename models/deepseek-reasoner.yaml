@@ -1,0 +1,6 @@
+name=deepseek-reasoner
+model=deepseek/deepseek-reasoner
+api_base=
+api_key_env=DEEPSEEK_API_KEY
+description=DeepSeek R1 Reasoner — $0.55/$2.19/M
+fallback=
